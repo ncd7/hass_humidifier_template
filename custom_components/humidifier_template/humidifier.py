@@ -69,6 +69,7 @@ CONF_ACTION_TEMPLATE = 'action_template'
 CONF_MODE_TEMPLATE = 'mode_template'
 CONF_MODE_LIST_TEMPLATE = 'mode_list_template'
 CONF_SWITCH_ID = 'switch_id'
+CONF_SET_STATE_ACTION = 'set_state_action'
 CONF_SET_MODE_ACTION = 'set_mode_action'
 CONF_SET_TARGET_HUMIDITY_ACTION = 'set_target_humidity_action'
 CONF_TYPE = 'type'
@@ -155,6 +156,7 @@ PLATFORM_SCHEMA = cv.PLATFORM_SCHEMA.extend(
             MODE_NORMAL
         ],
     ): cv.ensure_list,
+    vol.Optional(CONF_SET_STATE_ACTION): cv.SCRIPT_SCHEMA,
     vol.Optional(CONF_SET_MODE_ACTION): cv.SCRIPT_SCHEMA,
     vol.Optional(CONF_SET_TARGET_HUMIDITY_ACTION): cv.SCRIPT_SCHEMA,
     vol.Optional(CONF_UNIQUE_ID): cv.string,
@@ -247,6 +249,9 @@ class TemplateHumidifier(TemplateEntity, HumidifierEntity, RestoreEntity):
         self._mode_template = config.get(CONF_MODE_TEMPLATE, None)
         self._mode_list_template = config.get(CONF_MODE_LIST_TEMPLATE, None)
         self._switch_id = config.get(CONF_SWITCH_ID, None)
+        self._set_state_action = config.get(CONF_SET_STATE_ACTION, None)
+        if self._switch_id and self._set_state_action:
+            raise ValueError(f"Cannot define both {CONF_SWITCH_ID} and {CONF_SET_STATE_ACTION}")
         self._set_mode_action = config.get(CONF_SET_MODE_ACTION, None)
         self._set_target_humidity_action = config.get(CONF_SET_TARGET_HUMIDITY_ACTION, None)
 
@@ -271,6 +276,13 @@ class TemplateHumidifier(TemplateEntity, HumidifierEntity, RestoreEntity):
         self._available = True
 
         # set script variables
+        self._set_state_script = None
+        set_state_action = config.get(CONF_SET_STATE_ACTION)
+        if set_state_action:
+            self._set_state_script = Script(
+                hass, set_state_action, self._attr_name, DOMAIN
+            )
+
         self._set_mode_script = None
         set_mode_action = config.get(CONF_SET_MODE_ACTION)
         if set_mode_action:
@@ -396,7 +408,7 @@ class TemplateHumidifier(TemplateEntity, HumidifierEntity, RestoreEntity):
     async def async_set_mode(self, mode: str) -> None:
         """Set new mode."""
         if self._mode_template is None:
-            self._attr_mode = mode  # always optimistic
+            self._attr_mode = mode # always optimistic
             self.async_write_ha_state()
 
         if self._set_mode_script is not None:
@@ -421,6 +433,10 @@ class TemplateHumidifier(TemplateEntity, HumidifierEntity, RestoreEntity):
                     SERVICE_TURN_ON,
                     {"entity_id": self._switch_id}
                 )
+        elif self._set_state_script is not None:
+            await self._set_state_script.async_run(
+                run_variables={"state": "on"}, context=self._context
+            )
 
     async def async_turn_off(self) -> None:
         """Turn the device off."""
@@ -439,6 +455,10 @@ class TemplateHumidifier(TemplateEntity, HumidifierEntity, RestoreEntity):
                     SERVICE_TURN_OFF,
                     {"entity_id": self._switch_id}
                 )
+        elif self._set_state_script is not None:
+            await self._set_state_script.async_run(
+                run_variables={"state": "off"}, context=self._context
+            )
 
     @callback
     def _update_state(self, state):
